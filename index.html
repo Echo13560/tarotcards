@@ -2575,6 +2575,35 @@
                     </div>
                 </div>
 
+                <!-- 关系合盘入口 -->
+                <div class="mb-6 relative z-10" id="relationship-entry">
+                    <h2 class="font-serif text-xl text-on-surface mb-4 flex items-center gap-2">
+                        <span class="h-px w-6 bg-primary/30"></span>✨ 特别推荐
+                    </h2>
+                    <div class="glass-card rounded-2xl p-5 cursor-pointer transition-all hover:border-pink-400/40 active:scale-[0.98] border-pink-400/20" id="open-relationship-btn">
+                        <div class="flex items-center gap-4">
+                            <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl" style="background:linear-gradient(135deg,rgba(255,105,180,0.18),rgba(147,112,219,0.18));">
+                                💞
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h3 class="font-serif text-base text-pink-300 mb-1">关系合盘 · 两人深度解读</h3>
+                                <p class="text-[11px] text-on-surface-variant/70 leading-relaxed">输入双方信息，抽 7 张牌，AI 解读关系能量与未来走向</p>
+                                <div class="flex items-center gap-3 mt-1.5 flex-wrap">
+                                    <span class="text-[10px] text-pink-300/80 flex items-center gap-1">
+                                        <span class="material-symbols-outlined" style="font-size:12px;">favorite</span>
+                                        适合情侣·暧昧·搭档
+                                    </span>
+                                    <span class="text-[10px] text-primary/60 flex items-center gap-1">
+                                        <span class="material-symbols-outlined" style="font-size:12px;">share</span>
+                                        精美分享图
+                                    </span>
+                                </div>
+                            </div>
+                            <span class="material-symbols-outlined text-pink-400/50">chevron_right</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Quick Entries -->
                 <div class="grid grid-cols-4 gap-2 mb-6 relative z-10">
                     <div class="glass-card rounded-2xl p-3 flex flex-col items-center cursor-pointer transition-all active:scale-[0.96]" id="journal-entry">
@@ -4412,6 +4441,11 @@
 
         // ===== 生成解读 =====
         function generateReading() {
+            // 关系合盘模式：走独立流程
+            if (state.relationshipMode) {
+                generateRelationshipReading();
+                return;
+            }
             goToStep(4);
             // 进入解读阶段，清除草稿
             try { clearDivinationProgress(); } catch (_) {}
@@ -7344,6 +7378,128 @@
             }
         }
 
+        // ===== 关系合盘解读 =====
+        function generateRelationshipReading() {
+            goToStep(4);
+            try { clearDivinationProgress(); } catch (_) {}
+            // 隐藏普通解读 loading/result，直接渲染牌面
+            const loading = $('#reading-loading'); const result = $('#reading-result');
+            if (loading) loading.style.display = 'none';
+            if (result) result.style.display = 'none';
+
+            // 渲染牌面（复用 renderReading）
+            const spread = window.TAROT_SPREADS['relationship'];
+            const reading = window.TarotEngine.generateSpreadReading(state.selectedCards, spread,
+                (relationshipData && relationshipData.question) || '');
+            state.lastReading = reading;
+
+            // 填充结果页
+            renderRelationshipResult(reading);
+
+            // 保存到历史
+            saveToHistory();
+            if (window.TarotSFX) window.TarotSFX.chime();
+            triggerPetFeedFromReading();
+
+            // 自动触发 AI 合盘解读
+            if (window.TarotAI && window.TarotAI.isEnabled()) {
+                setTimeout(() => runRelationshipAIReading(), 1200);
+            }
+        }
+
+        function renderRelationshipResult(reading) {
+            const page = $('#page-relationship-result');
+            if (!page) return;
+            // 姓名
+            const nameA = $('#rel-result-name-a');
+            const nameB = $('#rel-result-name-b');
+            if (nameA) nameA.textContent = (relationshipData && relationshipData.personA && relationshipData.personA.name) || '我';
+            if (nameB) nameB.textContent = (relationshipData && relationshipData.personB && relationshipData.personB.name) || 'TA';
+            // 日期
+            const dateEl = $('#rel-result-date');
+            if (dateEl) dateEl.textContent = new Date().toLocaleDateString('zh-CN');
+            // 牌面
+            const cardsDiv = $('#rel-result-cards');
+            if (cardsDiv) {
+                cardsDiv.innerHTML = '';
+                const spread = window.TAROT_SPREADS['relationship'];
+                state.selectedCards.forEach((card, i) => {
+                    const pos = spread.positions[i];
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'text-center mb-4';
+                    wrapper.innerHTML = `
+                        <div class="inline-block">${window.AppFeatures.renderRealCard(card)}</div>
+                        <div class="text-[10px] text-on-surface-variant/70 mt-1 font-semibold">${pos ? pos.name : ''}</div>
+                        <div class="text-[9px] ${card.reversed ? 'text-tertiary/70' : 'text-primary/70'} font-medium">${card.reversed ? '逆位' : '正位'}</div>
+                    `;
+                    cardsDiv.appendChild(wrapper);
+                });
+            }
+            // AI 解读区先清空
+            const textEl = $('#rel-result-text');
+            if (textEl) {
+                textEl.innerHTML = '<span class="text-on-surface-variant/40 text-xs">AI 正在解读中，请稍候…</span>';
+            }
+            showPage('page-relationship-result');
+        }
+
+        async function runRelationshipAIReading() {
+            if (!window.TarotAI || !window.TarotAI.streamRelationshipReading) {
+                showToast('⚠️ AI 模块未加载');
+                return;
+            }
+            const textEl = $('#rel-result-text');
+            if (textEl) {
+                textEl.innerHTML = '';
+                textEl.classList.add('ai-cursor');
+            }
+            let buffer = '';
+            try {
+                const payload = {
+                    personA: (relationshipData && relationshipData.personA) || { name: '我' },
+                    personB: (relationshipData && relationshipData.personB) || { name: 'TA' },
+                    question: (relationshipData && relationshipData.question) || '',
+                    spreadName: '关系合盘',
+                    cards: state.selectedCards.map((c, i) => {
+                        const spread = window.TAROT_SPREADS['relationship'];
+                        return {
+                            name: c.name,
+                            reversed: c.reversed,
+                            keywords: c.keywords || [],
+                            positionName: spread.positions[i] && spread.positions[i].name,
+                            positionDesc: spread.positions[i] && spread.positions[i].desc
+                        };
+                    })
+                };
+                await window.TarotAI.streamRelationshipReading(payload, (delta) => {
+                    buffer += delta;
+                    if (textEl) textEl.innerHTML = tinyMD(buffer) + '<span class="ai-cursor-tail"></span>';
+                });
+                if (textEl) {
+                    textEl.classList.remove('ai-cursor');
+                    textEl.innerHTML = tinyMD(buffer);
+                }
+                // 保存到 lastRecord
+                if (state.lastRecord) {
+                    state.lastRecord.aiReading = buffer;
+                    const idx = state.history.findIndex(h => h.id === state.lastRecord.id);
+                    if (idx >= 0) {
+                        state.history[idx] = state.lastRecord;
+                        localStorage.setItem('tarot_history', JSON.stringify(state.history));
+                    }
+                    if (window.TarotMemory) {
+                        window.TarotMemory.ingest(state.lastRecord, buffer).catch(()=>{});
+                    }
+                }
+            } catch (e) {
+                console.error('关系合盘 AI 解读失败:', e);
+                if (textEl) {
+                    textEl.classList.remove('ai-cursor');
+                    textEl.innerHTML = `<span style="color:#dc5064;font-size:12px;">✗ AI 解读失败：${(e.message || e).toString().slice(0,200)}</span>`;
+                }
+            }
+        }
+
         // ============================================================
         //  宠物喂养系统：详情弹窗 + 喂食触发
         // ============================================================
@@ -8164,6 +8320,230 @@
             installBtn.classList.add('hidden');
             deferredPrompt = null;
         });
+
+        // ===== 关系合盘逻辑 =====
+        let relationshipData = null; // { personA, personB, question }
+
+        $('#open-relationship-btn').addEventListener('click', () => {
+            $('#relationship-modal').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        });
+
+        $('#relationship-modal-close').addEventListener('click', () => {
+            $('#relationship-modal').classList.remove('active');
+            document.body.style.overflow = '';
+        });
+
+        $('#relationship-start-btn').addEventListener('click', () => {
+            const nameA = $('#rel-name-a').value.trim() || '我';
+            const zodiacA = $('#rel-zodiac-a').value;
+            const nameB = $('#rel-name-b').value.trim() || 'TA';
+            const zodiacB = $('#rel-zodiac-b').value;
+            const question = $('#rel-question').value.trim();
+
+            relationshipData = {
+                personA: { name: nameA, zodiac: zodiacA },
+                personB: { name: nameB, zodiac: zodiacB },
+                question: question || `我与${nameB}的关系走向`
+            };
+
+            $('#relationship-modal').classList.remove('active');
+            document.body.style.overflow = '';
+
+            // 直接进入占卜页，使用固定的 relationship 牌阵
+            state.relationshipMode = true;
+            state.selectedSpread = 'relationship';
+            state.question = relationshipData.question;
+            showPage('page-divination');
+            // 直接跳到抽牌步骤
+            setTimeout(() => {
+                const spread = window.TAROT_SPREADS['relationship'];
+                if (spread) {
+                    // 手动触发抽牌界面
+                    $('#div-question').value = relationshipData.question;
+                    goToStep(3);
+                    window.TarotEngine.renderDeck($('#card-deck'), spread.cards, (selected) => {
+                        state.selectedCards = selected;
+                        const btn = $('#to-step-4');
+                        if (btn) btn.disabled = false;
+                    });
+                }
+            }, 300);
+        });
+
+        // 关系合盘结果页返回
+        $('#rel-result-back').addEventListener('click', () => {
+            state.relationshipMode = false;
+            relationshipData = null;
+            showPage('page-home');
+        });
+
+        // 关系合盘分享
+        $('#rel-result-share').addEventListener('click', async () => {
+            if (!window.TarotPoster || !TarotPoster.renderRelationship) {
+                showToast('⚠️ 分享模块未加载');
+                return;
+            }
+            const record = state.lastRecord;
+            if (!record) { showToast('暂无合盘记录'); return; }
+            try {
+                showToast('🎨 正在生成分享图...');
+                const payload = {
+                    type: 'relationship',
+                    personA: relationshipData ? relationshipData.personA : { name: '我' },
+                    personB: relationshipData ? relationshipData.personB : { name: 'TA' },
+                    question: (record.question || '') || (relationshipData && relationshipData.question) || '',
+                    cards: (record.cards || []).map(c => ({
+                        name: c.name || c.card && c.card.name,
+                        reversed: c.reversed || c.card && c.card.reversed,
+                        positionName: c.position && c.position.name,
+                        keywords: c.card && c.card.keywords || []
+                    })),
+                    advice: record.aiReading || '',
+                    date: new Date().toLocaleDateString('zh-CN')
+                };
+                const { dataUrl, blob } = await TarotPoster.renderRelationship(payload);
+                if (TarotPoster.canNativeShare && TarotPoster.canNativeShare()) {
+                    await TarotPoster.share(blob, payload);
+                } else {
+                    TarotPoster.download(dataUrl, `关系合盘_${(relationshipData && relationshipData.personB && relationshipData.personB.name) || 'TA'}_${Date.now()}.png`);
+                }
+            } catch (e) {
+                console.error('关系合盘分享失败:', e);
+                showToast('分享图生成失败，请重试');
+            }
+        });
+
+        // 拦截 AI 解读，改用关系合盘 prompt
+        const _origStreamReading = window.TarotAI && window.TarotAI.streamReading;
+        // 在 showReadingResult 中检测 relationshipMode
+        const _origShowReadingResult = window.showReadingResult;
+        });
     </script>
+
+    <!-- ===== 关系合盘弹窗 ===== -->
+    <div class="relationship-modal-overlay" id="relationship-modal">
+        <div class="relationship-modal glass-card">
+            <div class="flex items-center justify-between mb-5">
+                <h3 class="font-serif text-lg text-primary flex items-center gap-2">
+                    <span>💞</span> 关系合盘
+                </h3>
+                <button class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center cursor-pointer" id="relationship-modal-close" aria-label="关闭">
+                    <span class="material-symbols-outlined text-sm">close</span>
+                </button>
+            </div>
+            <p class="text-xs text-on-surface-variant/60 mb-5">输入双方信息，AI 将用 7 张关系牌为你解读两人能量与未来走向</p>
+            <div class="space-y-4">
+                <!-- 我 -->
+                <div class="p-3 rounded-xl" style="background:rgba(126,200,227,0.06);border:1px solid rgba(126,200,227,0.15);">
+                    <div class="text-xs text-primary/70 mb-2 font-semibold tracking-wide">问卜者（我）</div>
+                    <input type="text" id="rel-name-a" class="w-full py-2.5 px-4 rounded-lg bg-surface-container-high border border-primary/10 text-on-surface text-sm outline-none focus:border-primary/40 transition-all" placeholder="你的名字（可选）">
+                    <select id="rel-zodiac-a" class="w-full mt-2 py-2 px-4 rounded-lg bg-surface-container-high border border-primary/10 text-on-surface-variant text-sm outline-none focus:border-primary/40 transition-all cursor-pointer">
+                        <option value="">选择星座（可选）</option>
+                        <option value="白羊">♈ 白羊座</option>
+                        <option value="金牛">♉ 金牛座</option>
+                        <option value="双子">♊ 双子座</option>
+                        <option value="巨蟹">♋ 巨蟹座</option>
+                        <option value="狮子">♌ 狮子座</option>
+                        <option value="处女">♍ 处女座</option>
+                        <option value="天秤">♎ 天秤座</option>
+                        <option value="天蝎">♏ 天蝎座</option>
+                        <option value="射手">♐ 射手座</option>
+                        <option value="摩羯">♑ 摩羯座</option>
+                        <option value="水瓶">♒ 水瓶座</option>
+                        <option value="双鱼">♓ 双鱼座</option>
+                    </select>
+                </div>
+                <!-- 对方 -->
+                <div class="p-3 rounded-xl" style="background:rgba(255,105,180,0.06);border:1px solid rgba(255,105,180,0.15);">
+                    <div class="text-xs text-pink-300/70 mb-2 font-semibold tracking-wide">对方（TA）</div>
+                    <input type="text" id="rel-name-b" class="w-full py-2.5 px-4 rounded-lg bg-surface-container-high border border-primary/10 text-on-surface text-sm outline-none focus:border-pink-400/40 transition-all" placeholder="TA 的名字（可选）">
+                    <select id="rel-zodiac-b" class="w-full mt-2 py-2 px-4 rounded-lg bg-surface-container-high border border-primary/10 text-on-surface-variant text-sm outline-none focus:border-pink-400/40 transition-all cursor-pointer">
+                        <option value="">选择星座（可选）</option>
+                        <option value="白羊">♈ 白羊座</option>
+                        <option value="金牛">♉ 金牛座</option>
+                        <option value="双子">♊ 双子座</option>
+                        <option value="巨蟹">♋ 巨蟹座</option>
+                        <option value="狮子">♌ 狮子座</option>
+                        <option value="处女">♍ 处女座</option>
+                        <option value="天秤">♎ 天秤座</option>
+                        <option value="天蝎">♏ 天蝎座</option>
+                        <option value="射手">♐ 射手座</option>
+                        <option value="摩羯">♑ 摩羯座</option>
+                        <option value="水瓶">♒ 水瓶座</option>
+                        <option value="双鱼">♓ 双鱼座</option>
+                    </select>
+                </div>
+                <!-- 问题 -->
+                <div>
+                    <div class="text-xs text-on-surface-variant/50 mb-2">关系问题（可选）</div>
+                    <input type="text" id="rel-question" class="w-full py-2.5 px-4 rounded-lg bg-surface-container-high border border-primary/10 text-on-surface text-sm outline-none focus:border-primary/40 transition-all" placeholder="例如：我们适合在一起吗？">
+                </div>
+            </div>
+            <button class="w-full mt-5 py-3.5 rounded-full bg-gradient-to-r from-primary to-pink-400 text-on-primary text-sm font-bold cursor-pointer transition-all active:scale-[0.98] flex items-center justify-center gap-2" id="relationship-start-btn">
+                <span class="material-symbols-outlined text-base">auto_awesome</span>
+                开始合盘解读
+            </button>
+        </div>
+    </div>
+
+    <!-- ===== 关系合盘结果页 ===== -->
+    <div class="page" id="page-relationship-result" style="display:none;">
+        <header class="fixed top-0 left-1/2 -translate-x-1/2 z-50 w-full max-w-[430px] bg-background/80 backdrop-blur-xl border-b border-primary/10 flex items-center gap-3 px-5 h-16">
+            <button class="w-10 h-10 rounded-xl bg-surface-container-high border border-primary/10 flex items-center justify-center cursor-pointer text-on-surface transition-all active:scale-90" id="rel-result-back">
+                <span class="material-symbols-outlined text-lg">arrow_back</span>
+            </button>
+            <h1 class="font-serif text-lg text-on-surface">💞 关系合盘</h1>
+            <div class="flex-1"></div>
+            <button class="w-10 h-10 rounded-xl bg-surface-container-high border border-primary/10 flex items-center justify-center cursor-pointer text-on-surface transition-all active:scale-90" id="rel-result-share" aria-label="分享合盘报告">
+                <span class="material-symbols-outlined text-lg">share</span>
+            </button>
+        </header>
+        <main class="pt-24 pb-8 px-5 relative">
+            <div class="text-center mb-6">
+                <div class="flex items-center justify-center gap-3 mb-2">
+                    <span class="text-lg font-serif text-primary" id="rel-result-name-a">我</span>
+                    <span class="text-pink-400 text-xl">💞</span>
+                    <span class="text-lg font-serif text-pink-300" id="rel-result-name-b">TA</span>
+                </div>
+                <p class="text-xs text-on-surface-variant/50" id="rel-result-date"></p>
+            </div>
+            <!-- 牌面展示 -->
+            <div class="mb-6" id="rel-result-cards"></div>
+            <!-- AI 解读 -->
+            <div class="glass-card rounded-2xl p-5 mb-6" id="rel-result-reading">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="material-symbols-outlined text-primary text-sm">auto_awesome</span>
+                    <span class="text-xs font-semibold text-primary tracking-wide">AI 合盘解读</span>
+                </div>
+                <div class="text-sm text-on-surface leading-relaxed whitespace-pre-wrap" id="rel-result-text">加载中...</div>
+            </div>
+            <!-- 操作按钮 -->
+            <div class="grid grid-cols-2 gap-3">
+                <button class="py-3 rounded-xl bg-surface-container-high border border-primary/15 text-on-surface text-sm font-semibold cursor-pointer transition-all active:scale-95 flex items-center justify-center gap-2" id="rel-result-save">
+                    <span class="material-symbols-outlined text-base">bookmark</span> 收藏
+                </button>
+                <button class="py-3 rounded-xl bg-primary text-on-primary text-sm font-semibold cursor-pointer transition-all active:scale-95 flex items-center justify-center gap-2" id="rel-result-share-btn2">
+                    <span class="material-symbols-outlined text-base">share</span> 分享
+                </button>
+            </div>
+        </main>
+    </div>
+
+    <style>
+        .relationship-modal-overlay {
+            position: fixed; inset: 0; z-index: 9999;
+            background: rgba(0,0,0,0.6); backdrop-filter: blur(8px);
+            display: none; align-items: center; justify-content: center;
+            padding: 20px;
+        }
+        .relationship-modal-overlay.active { display: flex; }
+        .relationship-modal {
+            width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto;
+            padding: 24px; border-radius: 24px;
+            background: rgba(20,16,32,0.95);
+            border: 1px solid rgba(242,202,80,0.2);
+        }
+    </style>
 </body>
 </html>

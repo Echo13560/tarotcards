@@ -81,6 +81,22 @@ window.TAROT_SPREADS = {
         ],
         howTo: '塔罗中最完整、最深入的牌阵。适合人生重大议题的全方位探索。',
         suitableFor: ['重大议题', '人生十字路口', '深度心灵探索']
+    },
+    // 7 张牌 - 关系合盘
+    relationship: {
+        key: 'relationship', name: '关系合盘', subtitle: '两人关系的深度解读',
+        emoji: '💞', cards: 7, level: 'advanced',
+        positions: [
+            { idx: 0, name: '我',       desc: '你在这段关系中的状态与能量' },
+            { idx: 1, name: '对方',     desc: '对方在关系中的状态与感受' },
+            { idx: 2, name: '关系现状', desc: '两人关系的当前能量与氛围' },
+            { idx: 3, name: '挑战',     desc: '关系中需要面对的课题与阻碍' },
+            { idx: 4, name: '机会',     desc: '关系中的成长空间与机会' },
+            { idx: 5, name: '建议',     desc: '宇宙给这段关系的建议' },
+            { idx: 6, name: '可能的结果', desc: '关系可能的发展方向' }
+        ],
+        howTo: '适合已有对象或暧昧中的两人，从灵魂层面解读关系的能量流动与未来可能。',
+        suitableFor: ['恋爱关系', '婚姻关系', '合作伙伴', '深度友情']
     }
 };
 console.log(`✓ 已加载 ${Object.keys(window.TAROT_SPREADS).length} 个牌阵`);

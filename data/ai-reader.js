@@ -495,6 +495,124 @@
         return callChat(messages, onDelta, opts);
     }
 
+    // ===== 关系合盘解读 =====
+    function buildRelationshipSystemPrompt(personaKey) {
+        const p = getPersona(personaKey || getConfig().persona);
+        return `你是一位资深的塔罗牌关系占卜师，专精于两人关系的能量解读。
+当前你的角色定位是「${p.name}」：${p.desc}。
+说话风格：${p.voice}
+整体基调：${p.tone}
+
+请严格遵守：
+1. 用中文回答，严格基于用户给出的 7 张关系牌、正逆位、牌阵位置进行解读。
+2. 回答结构：先逐张解读（每张结合位置含义），再给出关系能量分析，最后给出 2-3 条具体建议。
+3. 解读时要同时顾及双方感受，不偏不倚，温柔而诚实。
+4. 不使用"一定会""绝对"等绝对化语言，强调能量趋势与可能性。
+5. 语言精炼，每段不超过 80 字，使用 Markdown 列表 / 加粗使要点突出。
+6. 不要任何免责声明、不要提及"我是 AI"、不要"作为塔罗占卜师"开场。
+7. 请始终保持「${p.name}」的语气与风格，不要中途切换。
+
+特别关注：
+- 关系合盘不仅是"你们会不会在一起"，而是"这段关系对双方灵魂成长的意义"
+- 逆位牌往往代表需要转化的能量，不是"坏事"
+- 如果挑战牌是正位、机会牌是逆位，要特别指出
+- 结尾可以用一句诗意的话总结这段关系的灵魂课题`;
+    }
+
+    function buildRelationshipUserPrompt(payload) {
+        const { personA, personB, cards } = payload;
+        const lines = [];
+        lines.push(`【问卜者】${personA.name || '问卜者'}${personA.zodiac ? '（' + personA.zodiac + '）' : ''}`);
+        lines.push(`【对方】${personB.name || '对方'}${personB.zodiac ? '（' + personB.zodiac + '）' : ''}`);
+        if (personA.birthday || personB.birthday) {
+            lines.push(`【生日】${personA.name || '问卜者'}：${personA.birthday || '未知'}  /  ${personB.name || '对方'}：${personB.birthday || '未知'}`);
+        }
+        lines.push(``);
+        lines.push(`【关系问题】${payload.question || '（未填写特定问题，请就这段关系的整体能量做解读）'}`);
+        lines.push(``);
+        lines.push(`【7 张关系合盘牌】`);
+        (cards || []).forEach((c, i) => {
+            const orient = c.reversed ? '逆位' : '正位';
+            const pos = c.positionName ? `「${c.positionName}」（${c.positionDesc || ''}）` : `第 ${i + 1} 张`;
+            const kw = (c.keywords || []).slice(0, 4).join('、');
+            lines.push(`${i + 1}. ${pos} → ${c.name}（${orient}）｜关键词：${kw}`);
+        });
+        lines.push(``);
+        lines.push(`请按以下结构输出 Markdown：`);
+        lines.push(`### 💞 逐张解读`);
+        lines.push(`（每张牌一段，结合位置含义，同时顾及双方感受）`);
+        lines.push(``);
+        lines.push(`### 🌊 关系能量分析`);
+        lines.push(`（综合 7 张牌，分析：① 双方的能量状态 ② 关系中的张力与流动 ③ 挑战与机会）`);
+        lines.push(``);
+        lines.push(`### ✨ 给这段关系的建议`);
+        lines.push(`（2-3 条，具体可执行，兼顾双方成长）`);
+        return lines.join('\n');
+    }
+
+    // 关系合盘缓存 key
+    function relationshipCacheKey(payload, persona) {
+        const cards = (payload.cards || []).map(c => `${c.name}|${c.reversed ? 1 : 0}`).join('/');
+        const cfg = getConfig();
+        return [
+            (payload.personA && payload.personA.name) || '',
+            (payload.personB && payload.personB.name) || '',
+            payload.question || '',
+            cards,
+            persona || cfg.persona,
+            cfg.model
+        ].join('::');
+    }
+
+    async function streamRelationshipReading(payload, onDelta, opts) {
+        opts = opts || {};
+        const personaKey = opts.persona || getConfig().persona;
+
+        // 命中缓存：直接逐段播放
+        if (!opts.skipCache && getConfig().cacheEnabled) {
+            const k = relationshipCacheKey(payload, personaKey);
+            const all = loadCache();
+            if (all[k] && Date.now() - all[k].t < CACHE_TTL) {
+                const cached = all[k].text;
+                if (onDelta) {
+                    const chunkSize = 4;
+                    for (let i = 0; i < cached.length; i += chunkSize) {
+                        onDelta(cached.slice(i, i + chunkSize));
+                        await new Promise(r => setTimeout(r, 12));
+                    }
+                }
+                return cached;
+            }
+        }
+
+        const messages = [
+            { role: 'system', content: buildRelationshipSystemPrompt(personaKey) }
+        ];
+
+        // 注入长期记忆（以关系问题做检索）
+        const memSnippet = await getMemorySnippet(Object.assign({}, payload, {
+            question: payload.question || `我与${(payload.personB && payload.personB.name) || '对方'}的关系`,
+            topic: '感情'
+        }), opts);
+        if (memSnippet) {
+            messages.push({ role: 'system', content: memSnippet });
+        }
+
+        messages.push({ role: 'user', content: buildRelationshipUserPrompt(payload) });
+
+        const full = await callChat(messages, onDelta, opts);
+
+        // 写入缓存
+        if (full && getConfig().cacheEnabled) {
+            const all = loadCache();
+            const k = relationshipCacheKey(payload, personaKey);
+            all[k] = { t: Date.now(), text: full };
+            saveCache(all);
+        }
+
+        return full;
+    }
+
     // ===== 测试连接 =====
     async function testConnection(tempCfg) {
         const cfg = Object.assign(getConfig(), tempCfg || {});
@@ -557,6 +675,7 @@
         streamReading,
         streamFollowup,
         streamRecap,
+        streamRelationshipReading,
         testConnection,
         buildPayloadFromReading,
         clearCache

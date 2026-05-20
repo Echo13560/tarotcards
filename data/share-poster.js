@@ -694,6 +694,139 @@
         } catch (e) { return false; }
     }
 
-    window.TarotPoster = { render, renderFavoritesPoster, download, share, canNativeShare, W, H };
+    // ===== 关系合盘海报 =====
+    async function renderRelationship(payload) {
+        const cw = 720, ch = 1280;
+        const canvas = document.createElement('canvas');
+        canvas.width = cw; canvas.height = ch;
+        const ctx = canvas.getContext('2d');
+
+        // 背景：双色渐变（左暖右冷，象征两人）
+        const bg = ctx.createLinearGradient(0, 0, cw, ch);
+        bg.addColorStop(0, '#1a0f2a');
+        bg.addColorStop(0.5, '#15101e');
+        bg.addColorStop(1, '#0e0e0e');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, cw, ch);
+
+        // 顶部光晕（双色）
+        const haloL = ctx.createRadialGradient(cw * 0.3, 80, 30, cw * 0.3, 80, 400);
+        haloL.addColorStop(0, 'rgba(242,202,80,0.18)');
+        haloL.addColorStop(1, 'rgba(242,202,80,0)');
+        ctx.fillStyle = haloL; ctx.fillRect(0, 0, cw, ch * 0.5);
+
+        const haloR = ctx.createRadialGradient(cw * 0.7, 80, 30, cw * 0.7, 80, 400);
+        haloR.addColorStop(0, 'rgba(255,105,180,0.15)');
+        haloR.addColorStop(1, 'rgba(255,105,180,0)');
+        ctx.fillStyle = haloR; ctx.fillRect(0, 0, cw, ch * 0.5);
+
+        // 星点
+        ctx.fillStyle = 'rgba(255,245,200,0.5)';
+        for (let i = 0; i < 80; i++) {
+            ctx.beginPath();
+            ctx.arc(Math.random() * cw, Math.random() * ch, Math.random() * 1.2 + 0.3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 双心装饰
+        ctx.save();
+        ctx.font = '48px serif';
+        ctx.fillStyle = 'rgba(255,105,180,0.12)';
+        ctx.textAlign = 'center';
+        ctx.fillText('💞', cw / 2, 120);
+        ctx.restore();
+
+        // 标题
+        drawCenteredText(ctx, '✦  关 系 合 盘  ✦', 170, {
+            font: '600 28px "EB Garamond", serif',
+            color: '#f2ca50',
+            shadow: 'rgba(242,202,80,0.5)', shadowBlur: 14
+        });
+
+        // 双方名字
+        const nameA = (payload.personA && payload.personA.name) || '我';
+        const nameB = (payload.personB && payload.personB.name) || 'TA';
+        ctx.font = '600 22px "EB Garamond", serif';
+        ctx.fillStyle = '#7ec8e3';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(nameA, cw / 2 - 30, 240);
+        ctx.font = '600 18px serif';
+        ctx.fillStyle = '#ff69b4';
+        ctx.textAlign = 'center';
+        ctx.fillText('💞', cw / 2, 240);
+        ctx.font = '600 22px "EB Garamond", serif';
+        ctx.fillStyle = '#f2ca50';
+        ctx.textAlign = 'left';
+        ctx.fillText(nameB, cw / 2 + 30, 240);
+
+        // 问题
+        if (payload.question) {
+            ctx.font = '14px sans-serif';
+            ctx.fillStyle = 'rgba(229,226,225,0.6)';
+            ctx.textAlign = 'center';
+            const qLines = wrapText(ctx, payload.question, cw - 120);
+            qLines.slice(0, 2).forEach((l, i) => ctx.fillText(l, cw / 2, 280 + i * 22));
+        }
+
+        // 分隔线
+        const lineY = 330;
+        ctx.strokeStyle = 'rgba(242,202,80,0.2)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(60, lineY); ctx.lineTo(cw - 60, lineY); ctx.stroke();
+        ctx.fillStyle = 'rgba(242,202,80,0.5)'; ctx.font = '12px serif'; ctx.fillText('✨', cw / 2, lineY - 6);
+
+        // 牌面（最多 7 张，缩小排列）
+        let ty = lineY + 30;
+        const cards = (payload.cards || []).slice(0, 7);
+        if (cards.length) {
+            const cardW = 80, cardH = 120, gap = 10;
+            const totalW = cards.length * cardW + (cards.length - 1) * gap;
+            let cx = (cw - totalW) / 2;
+            cards.forEach(c => {
+                drawCardIcon(ctx, cx, ty, cardW, cardH, c);
+                // 位置名
+                ctx.font = '10px sans-serif';
+                ctx.fillStyle = 'rgba(229,226,225,0.6)';
+                ctx.textAlign = 'center';
+                ctx.fillText(c.positionName || '', cx + cardW / 2, ty + cardH + 14);
+                cx += cardW + gap;
+            });
+            ty += cardH + 40;
+        }
+
+        // AI 解读摘要（截取前 300 字）
+        if (payload.advice) {
+            ctx.font = '13px sans-serif';
+            ctx.fillStyle = 'rgba(229,226,225,0.88)';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            const summary = payload.advice.replace(/\n+/g, ' ').slice(0, 300) + (payload.advice.length > 300 ? '…' : '');
+            const lines = wrapText(ctx, summary, cw - 100);
+            ty += 10;
+            lines.slice(0, 6).forEach(l => {
+                ctx.fillText(l, 50, ty);
+                ty += 22;
+            });
+        }
+
+        // 底部
+        const footY = ch - 100;
+        ctx.strokeStyle = 'rgba(242,202,80,0.2)';
+        ctx.beginPath(); ctx.moveTo(60, footY); ctx.lineTo(cw - 60, footY); ctx.stroke();
+        drawCenteredText(ctx, `✦  ${nameA}  ×  ${nameB}  ·  关系合盘  ✦`, footY + 30, {
+            font: '500 13px "EB Garamond", serif', color: 'rgba(242,202,80,0.5)'
+        });
+        drawCenteredText(ctx, '星辰塔罗 · Celestial Arcana', footY + 60, {
+            font: '11px sans-serif', color: 'rgba(229,226,225,0.3)'
+        });
+
+        return new Promise(resolve => {
+            const dataUrl = canvas.toDataURL('image/png');
+            canvas.toBlob(blob => resolve({ dataUrl, blob, canvas }), 'image/png');
+        });
+    }
+
+    window.TarotPoster = { render, renderFavoritesPoster, renderRelationship, download, share, canNativeShare, W, H };
     console.log('✓ Tarot Poster 模块已就绪');
 })();

@@ -1,5 +1,5 @@
 // service-worker.js - 星辰塔罗 PWA 离线缓存
-const CACHE_NAME = 'celestial-arcana-v2.5.0';
+const CACHE_NAME = 'celestial-arcana-v2.6.0';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
