@@ -24,6 +24,7 @@
     <script src="./data/daily-card.js"></script>
     <script src="./data/share-poster.js"></script>
     <script src="./data/history-plus.js"></script>
+    <script src="./data/memory-rag.js"></script>
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
     <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Hanken+Grotesk:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
@@ -3276,6 +3277,24 @@
                     <span class="material-symbols-outlined text-primary/70 text-base">chevron_right</span>
                 </button>
 
+                <!-- AI 长期记忆 RAG -->
+                <h3 class="text-sm font-bold text-on-surface mb-2 mt-4 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-sm" style="color:#7ec8e3;">psychology</span>AI 长期记忆
+                </h3>
+                <div id="memory-card" class="w-full p-3 rounded-xl glass-card" style="background:linear-gradient(135deg,rgba(126,200,227,0.08),rgba(32,31,31,0.6));border-color:rgba(126,200,227,0.22);">
+                    <div class="flex items-center justify-between mb-2">
+                        <div>
+                            <div class="text-xs text-on-surface font-semibold flex items-center gap-1.5">
+                                <span style="width:8px;height:8px;border-radius:50%;background:#7ec8e3;display:inline-block;box-shadow:0 0 6px #7ec8e3;"></span>
+                                <span id="memory-status">正在统计你的占卜模式…</span>
+                            </div>
+                            <div class="text-[10px] text-on-surface-variant/60 mt-0.5">AI 解读时会自动呼应过往，不再每次"忘了你"</div>
+                        </div>
+                        <button id="memory-clear-btn" type="button" class="text-[10px] text-on-surface-variant/55 underline cursor-pointer hover:text-on-surface-variant">清空</button>
+                    </div>
+                    <div id="memory-summary" class="text-[10px] text-on-surface-variant/75 leading-relaxed" style="display:none;"></div>
+                </div>
+
                 <!-- Data Management -->
                 <h3 class="text-sm font-bold text-on-surface mb-2 mt-4 flex items-center gap-2">
                     <span class="material-symbols-outlined text-primary text-sm">settings</span>数据管理
@@ -3979,6 +3998,12 @@
             if (state.history.length > 100) state.history.pop();
             localStorage.setItem('tarot_history', JSON.stringify(state.history));
             state.lastRecord = record;
+
+            // 写入长期记忆索引（不带 AI 文本，AI 解读完成后会再补一次）
+            if (window.TarotMemory) {
+                window.TarotMemory.ingest(record, '').catch(()=>{});
+                if (typeof renderMemoryPanel === 'function') setTimeout(renderMemoryPanel, 200);
+            }
 
             // 触发统计与成就
             const newAchs = window.AppFeatures.recordReading(record);
@@ -6231,6 +6256,9 @@
                 runAIReading();
             });
             updateAIStatusBadge();
+            // AI 长期记忆面板
+            renderMemoryPanel();
+            bindMemoryClear();
             const profileSaveBtn = $('#profile-save-btn');
             if (profileSaveBtn) { profileSaveBtn.addEventListener('click', savePetProfile); }
             const profileCancelBtn = $('#profile-cancel-btn');
@@ -7149,6 +7177,55 @@
             });
         }
 
+        // ============ AI 长期记忆面板 ============
+        async function renderMemoryPanel() {
+            if (!window.TarotMemory) return;
+            const statusEl = $('#memory-status');
+            const sumEl = $('#memory-summary');
+            try {
+                const s = await window.TarotMemory.summary();
+                if (!s || !s.total) {
+                    if (statusEl) statusEl.textContent = '尚无记忆 · 完成首次占卜后自动建立';
+                    if (sumEl) sumEl.style.display = 'none';
+                    return;
+                }
+                if (statusEl) statusEl.textContent = `已记住 ${s.total} 次占卜 · 跨度 ${s.spanDays} 天`;
+                if (sumEl) {
+                    const segs = [];
+                    if (s.topTopics && s.topTopics.length) {
+                        segs.push(`<b style="color:rgba(229,226,225,0.85);">最常关注</b>：${s.topTopics.map(x => `${x.name} <span style="opacity:.6;">×${x.count}</span>`).join('、')}`);
+                    }
+                    if (s.topCards && s.topCards.length) {
+                        segs.push(`<b style="color:rgba(229,226,225,0.85);">反复出现的牌</b>：${s.topCards.slice(0,4).map(x => x.name).join('、')}`);
+                    }
+                    if (s.topKeywords && s.topKeywords.length) {
+                        segs.push(`<b style="color:rgba(229,226,225,0.85);">高频议题</b>：${s.topKeywords.slice(0,5).map(x => x.word).join('、')}`);
+                    }
+                    if (s.dominantElement) {
+                        const elColor = { 火:'#ff8a65', 水:'#7ec8e3', 风:'#d09eff', 土:'#a8c97f' }[s.dominantElement] || '#fff';
+                        segs.push(`<b style="color:rgba(229,226,225,0.85);">主导元素</b>：<span style="color:${elColor};">${s.dominantElement}</span>${s.reversedRate >= 0.45 ? ` · 逆位率 ${Math.round(s.reversedRate*100)}%（能量偏阻滞）` : ''}`);
+                    }
+                    sumEl.innerHTML = segs.join('<br>');
+                    sumEl.style.display = 'block';
+                }
+            } catch (e) {
+                if (statusEl) statusEl.textContent = '记忆加载失败';
+            }
+        }
+
+        function bindMemoryClear() {
+            const btn = $('#memory-clear-btn');
+            if (!btn || btn._bound) return;
+            btn._bound = true;
+            btn.addEventListener('click', async () => {
+                if (!window.TarotMemory) return;
+                if (!confirm('清空 AI 长期记忆？\n这只会清除向量索引，不会删除你的占卜历史。')) return;
+                await window.TarotMemory.clear();
+                showToast('✓ 已清空 AI 记忆');
+                renderMemoryPanel();
+            });
+        }
+
         function updateAIStatusBadge() {
             const dot = $('#ai-status-dot'); const txt = $('#ai-status-text');
             const enabled = window.TarotAI && window.TarotAI.isEnabled();
@@ -7243,6 +7320,10 @@
                     if (idx >= 0) {
                         state.history[idx] = state.lastRecord;
                         localStorage.setItem('tarot_history', JSON.stringify(state.history));
+                    }
+                    // 写入长期记忆（带 AI 解读全文）
+                    if (window.TarotMemory) {
+                        window.TarotMemory.ingest(state.lastRecord, buffer).catch(()=>{});
                     }
                 }
                 // 音效反馈

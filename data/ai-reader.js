@@ -336,6 +336,40 @@
         return full;
     }
 
+    // ===== 长期记忆 (RAG) 注入 =====
+    // 异步获取记忆片段；任何错误都静默降级（不影响主流程）
+    async function getMemorySnippet(payload, opts) {
+        try {
+            if (!window.TarotMemory) return '';
+            // 避免命中刚刚保存的当前这条记录
+            const exclude = (opts && opts.excludeId) ? [opts.excludeId] : [];
+            // 召回主题相同的优先；若不够再放宽
+            const queryText = [
+                payload.question || '',
+                payload.topic || '',
+                (payload.cards || []).map(c => c.name).join(' ')
+            ].join(' ');
+            let recalls = await window.TarotMemory.recall(queryText, {
+                k: 3,
+                topic: payload.topicKey || null,
+                exclude,
+                maxAgeDays: 365
+            });
+            if (recalls.length < 2) {
+                // 放宽：跨主题再补
+                const more = await window.TarotMemory.recall(queryText, {
+                    k: 3, exclude: exclude.concat(recalls.map(r => r.id)), maxAgeDays: 365
+                });
+                recalls = recalls.concat(more).slice(0, 3);
+            }
+            const sumry = await window.TarotMemory.summary();
+            return window.TarotMemory.buildContextSnippet(recalls, sumry) || '';
+        } catch (e) {
+            console.warn('Memory recall failed:', e);
+            return '';
+        }
+    }
+
     // ===== 首轮解读（含缓存）=====
     async function streamReading(payload, onDelta, opts) {
         opts = opts || {};
@@ -354,9 +388,15 @@
             return cached;
         }
         const messages = [
-            { role: 'system', content: buildSystemPrompt(personaKey) },
-            { role: 'user',   content: buildUserPrompt(payload) }
+            { role: 'system', content: buildSystemPrompt(personaKey) }
         ];
+        // 注入长期记忆（如果有）
+        const memSnippet = await getMemorySnippet(payload, opts);
+        if (memSnippet) {
+            messages.push({ role: 'system', content: memSnippet });
+        }
+        messages.push({ role: 'user', content: buildUserPrompt(payload) });
+
         const full = await callChat(messages, onDelta, opts);
         if (full) setCachedReading(payload, personaKey, full);
         return full;
@@ -372,10 +412,17 @@
         opts = opts || {};
         const personaKey = opts.persona || getConfig().persona;
         const messages = [
-            { role: 'system', content: buildFollowupSystem(personaKey) },
-            { role: 'user', content: buildUserPrompt(payload) },
-            { role: 'assistant', content: firstAnswer || '（无）' }
+            { role: 'system', content: buildFollowupSystem(personaKey) }
         ];
+        // 追问时也注入记忆，但用"追问问题"做检索更精准
+        const memSnippet = await getMemorySnippet(
+            Object.assign({}, payload, { question: followupQuestion || payload.question }),
+            opts
+        );
+        if (memSnippet) messages.push({ role: 'system', content: memSnippet });
+
+        messages.push({ role: 'user', content: buildUserPrompt(payload) });
+        messages.push({ role: 'assistant', content: firstAnswer || '（无）' });
         // 之前的追问历史
         if (Array.isArray(history)) {
             history.forEach(m => {

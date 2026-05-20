@@ -1,5 +1,5 @@
 // service-worker.js - 星辰塔罗 PWA 离线缓存
-const CACHE_NAME = 'celestial-arcana-v2.4.0';
+const CACHE_NAME = 'celestial-arcana-v2.5.0';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -15,6 +15,7 @@ const ASSETS_TO_CACHE = [
     './data/daily-card.js',
     './data/share-poster.js',
     './data/history-plus.js',
+    './data/memory-rag.js',
     'https://cdn.tailwindcss.com?plugins=forms,container-queries',
     'https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Hanken+Grotesk:ital,wght@0,100..900;1,100..900&display=swap',
     'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap',
