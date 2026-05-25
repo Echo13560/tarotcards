@@ -1,5 +1,5 @@
 // service-worker.js - 星辰塔罗 PWA 离线缓存
-const CACHE_NAME = 'celestial-arcana-v2.6.0';
+const CACHE_NAME = 'celestial-arcana-v3.0.0';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -71,7 +71,7 @@ self.addEventListener('fetch', event => {
             .catch(() => {
                 // 离线且没缓存时的兜底页面
                 if (event.request.headers.get('accept').includes('text/html')) {
-                    return caches.match('./AI塔罗牌App需求原型.html');
+                    return caches.match('./index.html');
                 }
             })
     );

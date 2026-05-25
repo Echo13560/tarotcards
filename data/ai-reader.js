@@ -277,6 +277,9 @@
     }
 
     // ===== 通用调用底层 =====
+    // 默认 90 秒流式超时（防止网络卡死时界面永久挂起）
+    const STREAM_TIMEOUT_MS = 90_000;
+
     async function callChat(messages, onDelta, opts) {
         if (!isEnabled()) throw new Error('AI 解读未启用或未配置 API Key');
         const cfg = getConfig();
@@ -287,21 +290,40 @@
             temperature: (opts && opts.temperature != null) ? opts.temperature : cfg.temperature,
             messages
         };
-        const ctrl = (opts && opts.signal) ? opts.signal : null;
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + cfg.apiKey
-            },
-            body: JSON.stringify(body),
-            signal: ctrl || undefined
-        });
+
+        // 组合外部 signal 与内部超时 signal
+        const internalCtrl = new AbortController();
+        const timeoutId = setTimeout(() => internalCtrl.abort(new DOMException('AI 请求超时（90s），请检查网络或换一个模型', 'TimeoutError')), STREAM_TIMEOUT_MS);
+        const externalSignal = (opts && opts.signal) ? opts.signal : null;
+        // 若外部 signal 已中止，立即取消内部 controller
+        if (externalSignal) {
+            if (externalSignal.aborted) { clearTimeout(timeoutId); internalCtrl.abort(externalSignal.reason); }
+            else externalSignal.addEventListener('abort', () => { clearTimeout(timeoutId); internalCtrl.abort(externalSignal.reason); }, { once: true });
+        }
+
+        let resp;
+        try {
+            resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + cfg.apiKey
+                },
+                body: JSON.stringify(body),
+                signal: internalCtrl.signal
+            });
+        } catch (err) {
+            clearTimeout(timeoutId);
+            throw err;
+        }
+
         if (!resp.ok) {
+            clearTimeout(timeoutId);
             const txt = await resp.text().catch(() => '');
             throw new Error(`AI 服务返回 ${resp.status}：${txt.slice(0, 200)}`);
         }
         if (!resp.body || !resp.body.getReader) {
+            clearTimeout(timeoutId);
             const data = await resp.json();
             const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
             if (onDelta) onDelta(text);
@@ -311,27 +333,32 @@
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
         let full = '';
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            let idx;
-            while ((idx = buffer.indexOf('\n')) >= 0) {
-                const line = buffer.slice(0, idx).trim();
-                buffer = buffer.slice(idx + 1);
-                if (!line) continue;
-                if (!line.startsWith('data:')) continue;
-                const data = line.slice(5).trim();
-                if (data === '[DONE]') return full;
-                try {
-                    const json = JSON.parse(data);
-                    const delta = json.choices && json.choices[0] && json.choices[0].delta && json.choices[0].delta.content;
-                    if (delta) {
-                        full += delta;
-                        if (onDelta) onDelta(delta);
-                    }
-                } catch (e) { /* 忽略不合法行 */ }
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                let idx;
+                while ((idx = buffer.indexOf('\n')) >= 0) {
+                    const line = buffer.slice(0, idx).trim();
+                    buffer = buffer.slice(idx + 1);
+                    if (!line) continue;
+                    if (!line.startsWith('data:')) continue;
+                    const data = line.slice(5).trim();
+                    if (data === '[DONE]') return full;
+                    try {
+                        const json = JSON.parse(data);
+                        const delta = json.choices && json.choices[0] && json.choices[0].delta && json.choices[0].delta.content;
+                        if (delta) {
+                            full += delta;
+                            if (onDelta) onDelta(delta);
+                        }
+                    } catch (e) { /* 忽略不合法行 */ }
+                }
             }
+        } finally {
+            clearTimeout(timeoutId);
+            reader.releaseLock();
         }
         return full;
     }
